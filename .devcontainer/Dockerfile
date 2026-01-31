@@ -27,8 +27,8 @@ RUN curl -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init
 # Add elan to PATH
 ENV PATH="/root/.elan/bin:${PATH}"
 
-# Create workspace directory
-WORKDIR /workspaces/lemma
+# Create workspace directory (Codespaces uses repo name)
+WORKDIR /workspaces/lean-proofs
 
 # Copy requirements first for caching
 COPY requirements.txt .
