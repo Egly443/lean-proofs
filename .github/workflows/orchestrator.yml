@@ -1,0 +1,168 @@
+name: Proof Orchestrator
+
+on:
+  repository_dispatch:
+    types:
+      - find_candidates
+      - attempt_proof
+      - generate_paper
+      - find_reviewers
+      - draft_emails
+
+env:
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+jobs:
+  orchestrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Set up elan (Lean)
+        if: github.event.action == 'attempt_proof'
+        uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+
+      - name: Cache Mathlib
+        if: github.event.action == 'attempt_proof'
+        uses: actions/cache@v4
+        with:
+          path: ~/.elan
+          key: mathlib-${{ hashFiles('lean-toolchain', 'lake-manifest.json') }}
+
+      - name: Download Mathlib cache
+        if: github.event.action == 'attempt_proof'
+        run: |
+          lake update
+          lake exe cache get! || true
+
+      - name: Create results directory
+        run: mkdir -p results
+
+      # ============ FIND CANDIDATES ============
+      - name: Find proof candidates
+        if: github.event.action == 'find_candidates'
+        run: |
+          python -c "
+          import json
+          from orchestrator.scanner import scan_proof_candidates
+          candidates, files = scan_proof_candidates('local')
+          result = {
+            'candidates': [c.model_dump() for c in candidates],
+            'total_count': len(candidates),
+            'files_scanned': files
+          }
+          with open('results/candidates.json', 'w') as f:
+            json.dump(result, f, indent=2)
+          print(f'Found {len(candidates)} candidates in {files} files')
+          "
+
+      # ============ ATTEMPT PROOF ============
+      - name: Attempt proof
+        if: github.event.action == 'attempt_proof'
+        run: |
+          echo "Proof automation requires Lean bridge server - use Codespace for interactive proofs"
+          echo '{"status": "requires_codespace", "message": "Interactive proof attempts require the Codespace environment"}' > results/proof_attempt.json
+
+      # ============ GENERATE PAPER ============
+      - name: Generate paper
+        if: github.event.action == 'generate_paper'
+        run: |
+          python -c "
+          import json
+          import asyncio
+          from orchestrator.paper_generator import generate_paper
+
+          payload = ${{ toJson(github.event.client_payload) }}
+          title = payload.get('title', 'Untitled Paper')
+          theorems = payload.get('theorems', [])
+          authors = payload.get('authors', [])
+
+          async def main():
+            try:
+              latex, pdf = await generate_paper(title, theorems, authors=authors)
+              with open('results/paper.tex', 'w') as f:
+                f.write(latex)
+              result = {'status': 'success', 'latex_file': 'results/paper.tex', 'pdf_path': pdf}
+            except Exception as e:
+              result = {'status': 'error', 'message': str(e)}
+            with open('results/paper_result.json', 'w') as f:
+              json.dump(result, f, indent=2)
+
+          asyncio.run(main())
+          "
+
+      # ============ FIND REVIEWERS ============
+      - name: Find reviewers
+        if: github.event.action == 'find_reviewers'
+        run: |
+          python -c "
+          import json
+          from orchestrator.reviewer_finder import find_reviewers
+
+          payload = ${{ toJson(github.event.client_payload) }}
+          keywords = payload.get('keywords', ['Szemeredi', 'regularity lemma'])
+          max_results = payload.get('max_results', 10)
+
+          result = find_reviewers(keywords, max_results)
+          with open('results/reviewers.json', 'w') as f:
+            json.dump(result.model_dump(), f, indent=2)
+          print(f'Found {len(result.reviewers)} reviewers')
+          "
+
+      # ============ DRAFT EMAILS ============
+      - name: Draft emails
+        if: github.event.action == 'draft_emails'
+        run: |
+          python -c "
+          import json
+          import asyncio
+          from orchestrator.email_drafter import draft_email
+          from orchestrator.models import Reviewer
+
+          payload = ${{ toJson(github.event.client_payload) }}
+          reviewer_data = payload.get('reviewer', {})
+          reviewer = Reviewer(**reviewer_data)
+
+          async def main():
+            result = await draft_email(
+              reviewer=reviewer,
+              paper_title=payload.get('paper_title', ''),
+              paper_abstract=payload.get('paper_abstract', ''),
+              sender_name=payload.get('sender_name', 'Researcher')
+            )
+            with open('results/email_draft.json', 'w') as f:
+              json.dump(result.model_dump(), f, indent=2)
+
+          asyncio.run(main())
+          "
+
+      - name: Commit results
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add results/
+          git diff --staged --quiet || git commit -m "Results: ${{ github.event.action }} - $(date -u +%Y%m%d-%H%M%S)"
+          git push
+
+      - name: Create summary
+        run: |
+          echo "## ${{ github.event.action }} completed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Results committed to \`/results\` directory." >> $GITHUB_STEP_SUMMARY
+          if [ -f results/*.json ]; then
+            echo '```json' >> $GITHUB_STEP_SUMMARY
+            cat results/*.json | head -50 >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
