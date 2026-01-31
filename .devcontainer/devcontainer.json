@@ -5,11 +5,12 @@
     "context": ".."
   },
   "features": {
-    "ghcr.io/devcontainers/features/git:1": {}
+    "ghcr.io/devcontainers/features/git:1": {},
+    "ghcr.io/devcontainers/features/sshd:1": {}
   },
   "forwardPorts": [8000],
   "postCreateCommand": "lake update && lake exe cache get! && pip install -r requirements.txt",
-  "postStartCommand": "echo 'Lean environment ready. Run: python -m orchestrator.server'",
+  "postStartCommand": "nohup python -m orchestrator.server > /tmp/server.log 2>&1 &",
   "customizations": {
     "vscode": {
       "extensions": [
