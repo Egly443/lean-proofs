@@ -10,7 +10,7 @@
   },
   "forwardPorts": [8000],
   "postCreateCommand": "lake update && lake exe cache get! && pip install -r requirements.txt",
-  "postStartCommand": "nohup python -m orchestrator.server > /tmp/server.log 2>&1 &",
+  "postStartCommand": "cd /workspaces/lean-proofs && pip install -r requirements.txt -q && nohup python -m orchestrator.server > /tmp/server.log 2>&1 &",
   "customizations": {
     "vscode": {
       "extensions": [
@@ -33,7 +33,8 @@
   "portsAttributes": {
     "8000": {
       "label": "Orchestrator API",
-      "onAutoForward": "notify"
+      "onAutoForward": "notify",
+      "visibility": "public"
     }
   }
 }
