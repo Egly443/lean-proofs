@@ -1,0 +1,41 @@
+{
+  "candidates": [
+    {
+      "name": "partition_energy_lower_bound",
+      "statement": "lemma partition_energy_lower_bound (G : SimpleGraph V) [DecidableRel G.Adj]     (parts : Finset (Finset V))     (refinement : Finset V \u2192 Finset (Finset V))     (refined : Finset (Finset V))     (h_ref...",
+      "file_path": "EnergyIncrement5.lean",
+      "line_number": 334,
+      "has_sorry": true
+    },
+    {
+      "name": "energy_refine_variance_bound",
+      "statement": "theorem energy_refine_variance_bound (G : SimpleGraph V) [DecidableRel G.Adj]     (parts : Finset (Finset V)) (A B X Y : Finset V)     (hXA : X \u2286 A) (hYB : Y \u2286 B) (hA : A \u2208 parts) (hB : B \u2208 parts) :...",
+      "file_path": "EnergyIncrement5.lean",
+      "line_number": 419,
+      "has_sorry": true
+    },
+    {
+      "name": "energy_refine_variance_bound",
+      "statement": "theorem energy_refine_variance_bound (G : SimpleGraph V) [DecidableRel G.Adj]     (parts : Finset (Finset V)) (A B X Y : Finset V)     (hXA : X \u2286 A) (hYB : Y \u2286 B) (hA : A \u2208 parts) (hB : B \u2208 parts)...",
+      "file_path": "EnergyIncrement2.lean",
+      "line_number": 379,
+      "has_sorry": true
+    },
+    {
+      "name": "energy_refine_variance_bound",
+      "statement": "theorem energy_refine_variance_bound (G : SimpleGraph V) [DecidableRel G.Adj]     (parts : Finset (Finset V)) (A B X Y : Finset V)     (hXA : X \u2286 A) (hYB : Y \u2286 B) (hA : A \u2208 parts) (hB : B \u2208 parts) :...",
+      "file_path": "EnergyIncrement3.lean",
+      "line_number": 633,
+      "has_sorry": true
+    },
+    {
+      "name": "energy_refine_variance_bound",
+      "statement": "theorem energy_refine_variance_bound (G : SimpleGraph V) [DecidableRel G.Adj]     (parts : Finset (Finset V)) (A B X Y : Finset V)     (hXA : X \u2286 A) (hYB : Y \u2286 B) (hA : A \u2208 parts) (hB : B \u2208 parts) :...",
+      "file_path": "EnergyIncrement4.lean",
+      "line_number": 656,
+      "has_sorry": true
+    }
+  ],
+  "total_count": 5,
+  "files_scanned": 11
+}
