@@ -1,0 +1,38 @@
+{
+  "name": "Lean Proof Orchestrator",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/git:1": {}
+  },
+  "forwardPorts": [8000],
+  "postCreateCommand": "lake update && lake exe cache get! && pip install -r requirements.txt",
+  "postStartCommand": "echo 'Lean environment ready. Run: python -m orchestrator.server'",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "leanprover.lean4",
+        "ms-python.python",
+        "ms-python.vscode-pylance"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/bin/python3",
+        "editor.formatOnSave": true
+      }
+    },
+    "codespaces": {
+      "openFiles": ["README.md"]
+    }
+  },
+  "remoteEnv": {
+    "PATH": "/root/.elan/bin:${containerEnv:PATH}"
+  },
+  "portsAttributes": {
+    "8000": {
+      "label": "Orchestrator API",
+      "onAutoForward": "notify"
+    }
+  }
+}

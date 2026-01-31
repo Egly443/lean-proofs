@@ -1,0 +1,230 @@
+import sys
+import subprocess
+import json
+import socket
+import os
+import argparse
+import time
+import select
+from pathlib import Path
+
+# --- CONFIGURATION ---
+# We use stdbuf -oL to force line buffering so Python doesn't wait for 4KB blocks
+REPL_CMD = ["stdbuf", "-oL", "lake", "exe", "repl"]
+SOCKET_FILE = Path(".lean_bridge.sock")
+
+class LeanBridgeServer:
+    def __init__(self):
+        self.proc = None
+        self.sock = None
+        self.state_id = None
+
+    def _read_lean_output(self):
+        """Accumulates lines until a valid JSON object is formed."""
+        buffer = ""
+        while True:
+            line = self.proc.stdout.readline()
+            if not line: 
+                return None  # Process died
+            
+            # Skip leading whitespace/blank lines if we haven't started reading a JSON object yet
+            if not buffer and not line.strip():
+                continue
+                
+            buffer += line
+            
+            # Attempt to parse the accumulated buffer
+            try:
+                json.loads(buffer)
+                # If we get here, the JSON is complete and valid
+                return buffer
+            except json.JSONDecodeError:
+                # If it fails, it's likely incomplete (split across lines). 
+                # Continue the loop to read the next line.
+                continue
+    def start(self, lean_file):
+        print(f"[*] Starting Lean REPL for {lean_file}...")
+        # 1. Start Process
+        try:
+            self.proc = subprocess.Popen(
+                REPL_CMD,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=sys.stderr,
+                text=True,
+                bufsize=1  # Line buffered
+            )
+        except Exception as e:
+            print(f"Error starting process: {e}")
+            sys.exit(1)
+
+        # 2. Load Imports
+        try:
+            with open(lean_file, 'r') as f:
+                content = f.read()
+            imports = [line for line in content.splitlines() if line.strip().startswith("import ")]
+            # init_cmd = "\n".join(imports)
+            init_cmd = content
+            print(f"[*] Found {len(imports)} imports. Sending to REPL...")
+            
+            payload = {"cmd": init_cmd}
+            self.proc.stdin.write(json.dumps(payload) + "\n\n")
+            self.proc.stdin.flush()
+            
+            print("[*] Waiting for Lean response (this might take 10s or longer for heavy imports like Mathlib)...")
+            # We use select here for the initial load timeout
+            r, _, _ = select.select([self.proc.stdout], [], [], 120) # Increased timeout to 120s
+            if r:
+                # Use the helper to skip initial blank lines if any
+                response_line = self._read_lean_output()
+            else:
+                print("Timeout waiting for Lean response. Lean may be stuck loading imports.")
+                self.proc.terminate()
+                sys.exit(1)
+                
+            if not response_line:
+                print(f"Error: Lean process died or provided no output. Check logs above.")
+                sys.exit(1)
+                
+            res = json.loads(response_line.strip())
+            
+            # Handle messages
+            if "messages" in res and res["messages"]:
+                error_msgs = [m["data"] for m in res["messages"] if m.get("severity") == "error"]
+                warning_msgs = [m["data"] for m in res["messages"] if m.get("severity") == "warning"]
+                if error_msgs:
+                    print("[!] Errors from Lean init:")
+                    for msg in error_msgs: print(f"  - {msg}")
+                    self.proc.terminate()
+                    sys.exit(1)
+                if warning_msgs:
+                    print("[!] Warnings from Lean init:")
+                    for msg in warning_msgs: print(f"  - {msg}")
+
+            # Handle sorries
+            if "sorries" in res and res["sorries"]:
+                print("[*] Sorries found in init:")
+                for sorry in res["sorries"]:
+                    print(f"  - Goal: {sorry['goal']}, Proof State ID: {sorry['proofState']}")
+            
+            self.state_id = res.get("env", 0)
+            print(f"[*] Success! Environment loaded. Base State ID: {self.state_id}")
+            
+        except Exception as e:
+            print(f"Error during initialization: {e}")
+            if self.proc: self.proc.terminate()
+            sys.exit(1)
+
+        # 3. Start Socket Server
+        if SOCKET_FILE.exists(): SOCKET_FILE.unlink()
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.bind(str(SOCKET_FILE))
+        self.sock.listen(1)
+        print(f"[*] Server ready. Listening on {SOCKET_FILE}")
+        self._loop()
+
+    def _loop(self):
+        while True:
+            conn, _ = self.sock.accept()
+            with conn:
+                try:
+                    data = conn.recv(32768).decode()
+                    if not data: continue
+                    req = json.loads(data)
+                    reply = {"status": "error", "message": "Invalid request"}
+
+                    if req.get("command") == "tactic":
+                        payload = {"tactic": req["tactic"], "proofState": req.get("proof_state", self.state_id)}
+                        self.proc.stdin.write(json.dumps(payload) + "\n\n")
+                        self.proc.stdin.flush()
+                        
+                        resp_line = self._read_lean_output()
+                        
+                        if resp_line:
+                            lean_res = json.loads(resp_line.strip())
+                            if "goals" in lean_res:
+                                reply = {
+                                    "status": "success",
+                                    "goals": lean_res["goals"],
+                                    "new_state_id": lean_res.get("proofState", self.state_id)
+                                }
+                            elif "messages" in lean_res:
+                                msg = "\n".join([m.get("data", "") for m in lean_res["messages"]])
+                                reply = {"status": "error", "message": msg or "Unknown error"}
+                            else:
+                                reply = {"status": "error", "message": "Unknown response format"}
+                        else:
+                            reply = {"status": "error", "message": "Lean process silent"}
+
+                    elif req.get("command") == "cmd":
+                        payload = {"cmd": req["cmd"]}
+                        self.proc.stdin.write(json.dumps(payload) + "\n\n")
+                        self.proc.stdin.flush()
+                        
+                        resp_line = self._read_lean_output()
+                        
+                        if resp_line:
+                            lean_res = json.loads(resp_line.strip())
+                            reply = {
+                                "status": "success" if "env" in lean_res else "error",
+                                "response": lean_res
+                            }
+                        else:
+                            reply = {"status": "error", "message": "Lean process silent"}
+
+                    elif req.get("command") == "stop":
+                        self.proc.terminate()
+                        sys.exit(0)
+
+                    conn.sendall(json.dumps(reply).encode())
+                except Exception as e:
+                    conn.sendall(json.dumps({"status": "error", "message": str(e)}).encode())
+
+def run_client(args):
+    if not SOCKET_FILE.exists():
+        print("Server not running. Run 'python lean_bridge.py server <file>' first.")
+        return
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        client.connect(str(SOCKET_FILE))
+        req = {}
+        if args.mode == "tactic":
+            req = {"command": "tactic", "tactic": args.tactic, "proof_state": int(args.id) if args.id else None}
+        elif args.mode == "cmd":
+            req = {"command": "cmd", "cmd": args.cmd}
+        elif args.mode == "stop":
+            req = {"command": "stop"}
+        
+        client.sendall(json.dumps(req).encode())
+        print(client.recv(32768).decode())
+    except Exception as e:
+        print(f"Client error: {e}")
+    finally:
+        client.close()
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="mode")
+    
+    # Server command
+    srv = subparsers.add_parser("server")
+    srv.add_argument("file")
+    
+    # Client: Tactic
+    cli_tactic = subparsers.add_parser("tactic")
+    cli_tactic.add_argument("tactic")
+    cli_tactic.add_argument("--id")
+    
+    # Client: Command
+    cli_cmd = subparsers.add_parser("cmd")
+    cli_cmd.add_argument("cmd")
+    
+    # Client: Stop
+    stop = subparsers.add_parser("stop")
+    
+    args = parser.parse_args()
+    
+    if args.mode == "server":
+        LeanBridgeServer().start(args.file)
+    else:
+        run_client(args)

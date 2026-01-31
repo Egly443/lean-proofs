@@ -1,0 +1,12 @@
+lake-packages/
+build/
+.lake/
+*.olean
+.DS_Store
+__pycache__/
+*.pyc
+.env
+node_modules/
+venv/
+*.sock
+agent_memory.json
